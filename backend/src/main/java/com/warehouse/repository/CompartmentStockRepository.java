@@ -35,6 +35,8 @@ public interface CompartmentStockRepository
     """)
     List<IngredientVolumeResponse> sumQuantityByIngredientType();
 
+    boolean existsByCompartmentId(Long compartmentId);
+
     Optional<CompartmentStock> findByCompartmentIdAndIngredientId(
             Long compartmentId,
             Long ingredientId

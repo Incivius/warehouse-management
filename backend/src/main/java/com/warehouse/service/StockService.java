@@ -47,6 +47,7 @@ public class StockService {
             Long compartmentId,
             BigDecimal quantity
     ) {
+        validateQuantity(quantity);
         Compartment compartment = compartmentService.validateAndLock(
                 compartmentId,
                 ingredient.getIngredientType(),
@@ -60,16 +61,61 @@ public class StockService {
         compartment.setStatus(CompartmentStatus.OCCUPIED);
         compartment.setCurrentType(ingredient.getIngredientType());
 
+        return saveMovement(compartment, ingredient, user, MovementType.INBOUND, quantity);
+    }
+
+    @Transactional
+    public StockMovement removeStock(Long compartmentId, Long ingredientId, BigDecimal quantity) {
+        validateQuantity(quantity);
+        Compartment compartment = compartmentService.lockById(compartmentId);
+        AppUser user = getAuthenticatedUser();
+        CompartmentStock stock = compartmentStockRepository
+                .findByCompartmentIdAndIngredientId(compartmentId, ingredientId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INSUFFICIENT_STOCK));
+
+        BigDecimal remaining = stock.getQuantity().subtract(quantity);
+        if (remaining.signum() < 0) {
+            throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK);
+        }
+
+        Ingredient ingredient = stock.getIngredient();
+        StockMovement movement = saveMovement(compartment, ingredient, user, MovementType.OUTBOUND, quantity);
+
+        if (remaining.signum() > 0) {
+            stock.setQuantity(remaining);
+        } else {
+            compartmentStockRepository.delete(stock);
+            if (!compartmentStockRepository.existsByCompartmentId(compartmentId)) {
+                compartment.setStatus(CompartmentStatus.EMPTY);
+                compartment.setLastMovementAt(movement.getCreatedAt());
+            }
+        }
+
+        return movement;
+    }
+
+    private void validateQuantity(BigDecimal quantity) {
+        if (quantity == null || quantity.signum() <= 0 || quantity.scale() > 3
+                || quantity.precision() - (long) quantity.scale() > 9) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        }
+    }
+
+    private StockMovement saveMovement(
+            Compartment compartment,
+            Ingredient ingredient,
+            AppUser user,
+            MovementType movementType,
+            BigDecimal quantity
+    ) {
         StockMovement movement = new StockMovement();
         movement.setUser(user);
         movement.setCompartment(compartment);
         movement.setIngredient(ingredient);
-        movement.setMovementType(MovementType.INBOUND);
+        movement.setMovementType(movementType);
         movement.setQuantity(quantity);
 
-        StockMovement savedMovement = stockMovementRepository.save(movement);
-        compartment.setLastMovementAt(savedMovement.getCreatedAt());
-        return savedMovement;
+        return stockMovementRepository.save(movement);
     }
 
     private void updateCompartmentStock(

@@ -30,6 +30,7 @@ public class Compartment {
     @JoinColumn(name = "current_type_id")
     private IngredientType currentType;
 
+    // Data e hora da última saída que deixou o compartimento vazio.
     @Column(name = "last_movement_at")
     private LocalDateTime lastMovementAt;
 }

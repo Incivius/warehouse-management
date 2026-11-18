@@ -1,8 +1,10 @@
 package com.warehouse;
 
+import com.warehouse.exception.BusinessException;
 import com.warehouse.repository.AppUserRepository;
 import com.warehouse.security.CustomUserDetails;
 import com.warehouse.security.JwtService;
+import com.warehouse.service.StockService;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,16 +14,30 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
+import static com.warehouse.exception.ErrorCode.INSUFFICIENT_STOCK;
+import static com.warehouse.exception.ErrorCode.INVALID_REQUEST;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
+import static org.awaitility.Awaitility.await;
+import static org.hamcrest.Matchers.comparesEqualTo;
 import static org.springframework.http.HttpHeaders.AUTHORIZATION;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -47,8 +63,11 @@ class IngredientControllerTests {
     @Autowired private JdbcTemplate jdbc;
     @Autowired private AppUserRepository users;
     @Autowired private JwtService jwtService;
+    @Autowired private StockService stockService;
+    @Autowired private PlatformTransactionManager transactionManager;
 
     private String authorization;
+    private CustomUserDetails operator;
     private long userId;
 
     @BeforeEach
@@ -63,7 +82,8 @@ class IngredientControllerTests {
                 """, OPERATOR_LOGIN);
         var user = users.findByLogin(OPERATOR_LOGIN).orElseThrow();
         userId = user.getId();
-        authorization = "Bearer " + jwtService.generateToken(new CustomUserDetails(user));
+        operator = new CustomUserDetails(user);
+        authorization = "Bearer " + jwtService.generateToken(operator);
     }
 
     @AfterAll
@@ -111,10 +131,9 @@ class IngredientControllerTests {
                 .isEqualByComparingTo("100.125");
         assertThat(jdbc.queryForObject("SELECT user_id FROM stock_movement", Long.class)).isEqualTo(userId);
         assertThat(jdbc.queryForObject("""
-                SELECT c.status = 'OCCUPIED' AND t.name = 'DRY' AND c.last_movement_at = m.created_at
+                SELECT c.status = 'OCCUPIED' AND t.name = 'DRY' AND c.last_movement_at IS NULL
                 FROM compartment c
                 JOIN ingredient_type t ON t.id = c.current_type_id
-                JOIN stock_movement m ON m.compartment_id = c.id
                 WHERE c.id = 1
                 """, Boolean.class)).isTrue();
     }
@@ -126,7 +145,6 @@ class IngredientControllerTests {
             "{\"nome\":\"Arroz\",\"tipo\":\"DESCONHECIDO\"}",
             "{\"nome\":\"Arroz\",\"tipo\":\"DRY\",\"quantidade\":0,\"compartimentoId\":1}",
             "{\"nome\":\"Arroz\",\"tipo\":\"DRY\",\"quantidade\":-1,\"compartimentoId\":1}",
-            "{\"nome\":\"Arroz\",\"tipo\":\"DRY\",\"quantidade\":1.0005,\"compartimentoId\":1}",
             "{\"nome\":\"Arroz\",\"tipo\":\"DRY\",\"quantidade\":\"abc\",\"compartimentoId\":1}"
     })
     void rejectsInvalidRequests(String body) throws Exception {
@@ -134,6 +152,38 @@ class IngredientControllerTests {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
         assertThat(count("ingredient")).isZero();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"100", "100.1", "100.12", "100.125"})
+    void preservesDecimalQuantityInResponseStockHistoryAndVolume(String quantity) throws Exception {
+        BigDecimal expected = new BigDecimal(quantity);
+        create("""
+                {"nome":"Arroz","tipo":"DRY","quantidade":%s,"compartimentoId":1}
+                """.formatted(quantity))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.quantidade", comparesEqualTo(expected), BigDecimal.class))
+                .andExpect(jsonPath("$.movimentacao.quantidade", comparesEqualTo(expected), BigDecimal.class));
+
+        assertThat(jdbc.queryForObject("SELECT quantity FROM compartment_stock", BigDecimal.class))
+                .isEqualByComparingTo(expected);
+        assertThat(jdbc.queryForObject("SELECT quantity FROM stock_movement", BigDecimal.class))
+                .isEqualByComparingTo(expected);
+        mvc.perform(get("/ingredientes/volume").header(AUTHORIZATION, authorization))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].quantidadeTotal", comparesEqualTo(expected), BigDecimal.class));
+    }
+
+    @Test
+    void rejectsFourthDecimalPlaceWithoutRoundingOrWriting() throws Exception {
+        create("""
+                {"nome":"Arroz","tipo":"DRY","quantidade":100.1251,"compartimentoId":1}
+                """)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+        assertThat(count("ingredient")).isZero();
+        assertThat(count("compartment_stock")).isZero();
+        assertThat(count("stock_movement")).isZero();
     }
 
     @Test
@@ -158,6 +208,47 @@ class IngredientControllerTests {
     }
 
     @Test
+    void serializesConcurrentEntriesForTheSameCompartment() throws Exception {
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var transaction = new TransactionTemplate(transactionManager);
+            var requests = transaction.execute(ignored -> {
+                // Segura a linha até as duas requisições chegarem ao bloqueio no PostgreSQL.
+                jdbc.queryForObject("SELECT id FROM compartment WHERE id = 1 FOR NO KEY UPDATE", Long.class);
+                var first = executor.submit(() -> createWithStock("Arroz", "DRY", 400, 1));
+                var second = executor.submit(() -> createWithStock("Feijão", "DRY", 400, 1));
+
+                await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                        assertThat(jdbc.queryForObject("""
+                                SELECT count(*) FROM pg_stat_activity
+                                WHERE wait_event_type = 'Lock' AND query LIKE ?
+                                """, Integer.class, "%" + SCHEMA + ".compartment %for%update%")).isEqualTo(2));
+                return List.of(first, second);
+            });
+
+            var first = requests.getFirst().get(10, TimeUnit.SECONDS);
+            var second = requests.getLast().get(10, TimeUnit.SECONDS);
+            assertThat(List.of(first, second))
+                    .extracting(result -> result.andReturn().getResponse().getStatus())
+                    .containsExactlyInAnyOrder(201, 400);
+
+            var rejected = first.andReturn().getResponse().getStatus() == 400 ? first : second;
+            rejected.andExpect(jsonPath("$.code").value("INSUFFICIENT_CAPACITY"));
+        }
+
+        assertThat(count("ingredient")).isEqualTo(1);
+        assertThat(count("compartment_stock")).isEqualTo(1);
+        assertThat(count("stock_movement")).isEqualTo(1);
+        assertThat(jdbc.queryForObject("""
+                SELECT s.quantity = m.quantity AND s.quantity = 400
+                    AND s.quantity <= t.max_capacity AND m.movement_type = 'INBOUND'
+                FROM compartment_stock s
+                JOIN stock_movement m USING (compartment_id, ingredient_id)
+                JOIN ingredient i ON i.id = s.ingredient_id
+                JOIN ingredient_type t ON t.id = i.ingredient_type_id
+                """, Boolean.class)).isTrue();
+    }
+
+    @Test
     void rejectsDifferentTypeInOccupiedCompartment() throws Exception {
         createWithStock("Arroz", "DRY", 10, 1).andExpect(status().isCreated());
         createWithStock("Leite", "LIQUID", 10, 1)
@@ -167,20 +258,75 @@ class IngredientControllerTests {
     }
 
     @Test
-    void allowsChangingTypeOfEmptyCompartmentOnlyFromNextDay() throws Exception {
-        var now = LocalDateTime.now();
-        jdbc.update("""
-                UPDATE compartment SET current_type_id = (SELECT id FROM ingredient_type WHERE name = 'DRY'),
-                    last_movement_at = ? WHERE id = 1
-                """, now);
+    void recordsEmptyTimeOnlyAfterTheLastStockIsRemoved() throws Exception {
+        createWithStock("Arroz", "DRY", 10, 1).andExpect(status().isCreated());
+        createWithStock("Feijão", "DRY", 20, 1).andExpect(status().isCreated());
 
+        removeStock(1, "5.125");
+        assertThat(jdbc.queryForObject("SELECT quantity FROM compartment_stock WHERE ingredient_id = 1", BigDecimal.class))
+                .isEqualByComparingTo("4.875");
+        assertThat(emptyTime()).isNull();
+
+        removeStock(1, "4.875");
+        assertThat(count("compartment_stock")).isEqualTo(1);
+        assertThat(emptyTime()).isNull();
+        assertThat(jdbc.queryForObject("SELECT status FROM compartment WHERE id = 1", String.class))
+                .isEqualTo("OCCUPIED");
+
+        removeStock(2, "20");
+        assertThat(count("compartment_stock")).isZero();
+        assertThat(jdbc.queryForObject("""
+                SELECT c.status = 'EMPTY' AND t.name = 'DRY' AND c.last_movement_at = m.created_at
+                FROM compartment c
+                JOIN ingredient_type t ON t.id = c.current_type_id
+                JOIN stock_movement m ON m.compartment_id = c.id
+                WHERE c.id = 1 AND m.ingredient_id = 2 AND m.movement_type = 'OUTBOUND'
+                """, Boolean.class)).isTrue();
+    }
+
+    @Test
+    void rejectsInvalidWithdrawalsWithoutChangingStockOrHistory() throws Exception {
+        createWithStock("Arroz", "DRY", 10, 1).andExpect(status().isCreated());
+
+        assertThatExceptionOfType(BusinessException.class)
+                .isThrownBy(() -> removeStock(1, "10.001"))
+                .extracting(BusinessException::getErrorCode).isEqualTo(INSUFFICIENT_STOCK);
+        assertThatExceptionOfType(BusinessException.class)
+                .isThrownBy(() -> removeStock(1, "9.9999"))
+                .extracting(BusinessException::getErrorCode).isEqualTo(INVALID_REQUEST);
+
+        assertThat(jdbc.queryForObject("SELECT quantity FROM compartment_stock", BigDecimal.class))
+                .isEqualByComparingTo("10");
+        assertThat(count("stock_movement")).isEqualTo(1);
+        assertThat(emptyTime()).isNull();
+    }
+
+    @Test
+    void rejectsDifferentTypeOnTheDayTheCompartmentWasEmptied() throws Exception {
+        emptyDryCompartment();
         createWithStock("Leite", "LIQUID", 10, 1)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("COMPARTMENT_TEMPORARILY_BLOCKED"));
-        assertThat(count("ingredient")).isZero();
+        assertThat(count("ingredient")).isEqualTo(1);
+        assertThat(count("compartment_stock")).isZero();
+    }
 
-        jdbc.update("UPDATE compartment SET last_movement_at = ? WHERE id = 1", now.minusDays(1));
+    @Test
+    void allowsDifferentTypeOnTheNextCalendarDay() throws Exception {
+        emptyDryCompartment();
+        var beforeMidnight = LocalDate.now().atStartOfDay().minusNanos(1_000);
+        jdbc.update("UPDATE compartment SET last_movement_at = ? WHERE id = 1", beforeMidnight);
+
         createWithStock("Leite", "LIQUID", 10, 1).andExpect(status().isCreated());
+        assertThat(emptyTime()).isEqualTo(beforeMidnight);
+    }
+
+    @Test
+    void allowsRefillWithTheSameTypeOnTheDayItWasEmptied() throws Exception {
+        emptyDryCompartment();
+        var emptiedAt = emptyTime();
+        createWithStock("Feijão", "DRY", 10, 1).andExpect(status().isCreated());
+        assertThat(emptyTime()).isEqualTo(emptiedAt);
     }
 
     @Test
@@ -298,6 +444,27 @@ class IngredientControllerTests {
         return create("""
                 {"nome":"%s","tipo":"%s","quantidade":%d,"compartimentoId":%d}
                 """.formatted(name, type, quantity, compartmentId));
+    }
+
+    private void emptyDryCompartment() throws Exception {
+        createWithStock("Arroz", "DRY", 10, 1).andExpect(status().isCreated());
+        removeStock(1, "10");
+    }
+
+    private void removeStock(long ingredientId, String quantity) {
+        var context = SecurityContextHolder.createEmptyContext();
+        context.setAuthentication(UsernamePasswordAuthenticationToken.authenticated(
+                operator, null, operator.getAuthorities()));
+        SecurityContextHolder.setContext(context);
+        try {
+            stockService.removeStock(1L, ingredientId, new BigDecimal(quantity));
+        } finally {
+            SecurityContextHolder.clearContext();
+        }
+    }
+
+    private LocalDateTime emptyTime() {
+        return jdbc.queryForObject("SELECT last_movement_at FROM compartment WHERE id = 1", LocalDateTime.class);
     }
 
     private int count(String table) {

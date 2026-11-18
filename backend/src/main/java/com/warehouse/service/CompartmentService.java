@@ -34,6 +34,15 @@ public class CompartmentService {
             IngredientType ingredientType,
             BigDecimal quantity
     ) {
+        Compartment compartment = lockById(compartmentId);
+        validateIngredientType(compartment, ingredientType);
+        validateTemporalRule(compartment, ingredientType);
+        validateCapacity(compartment, ingredientType, quantity);
+
+        return compartment;
+    }
+
+    Compartment lockById(Long compartmentId) {
         Compartment compartment = compartmentRepository
                 .findByIdForUpdate(compartmentId)
                 .orElseThrow(() -> new BusinessException(
@@ -41,10 +50,6 @@ public class CompartmentService {
                 ));
 
         validateStatus(compartment);
-        validateIngredientType(compartment, ingredientType);
-        validateTemporalRule(compartment, ingredientType);
-        validateCapacity(compartment, ingredientType, quantity);
-
         return compartment;
     }
 
@@ -80,8 +85,7 @@ public class CompartmentService {
                 && !compartment.getCurrentType().getId()
                     .equals(ingredientType.getId())
                 && compartment.getLastMovementAt() != null
-                && compartment.getLastMovementAt()
-                    .toLocalDate().isEqual(LocalDate.now())) {
+                && !LocalDate.now().isAfter(compartment.getLastMovementAt().toLocalDate())) {
 
             throw new BusinessException(
                     ErrorCode.COMPARTMENT_TEMPORARILY_BLOCKED
