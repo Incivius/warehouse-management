@@ -1,5 +1,7 @@
 package com.warehouse.service;
 
+import com.warehouse.dto.request.StockMovementRequest;
+import com.warehouse.dto.response.StockMovementResponse;
 import com.warehouse.entity.AppUser;
 import com.warehouse.entity.Compartment;
 import com.warehouse.entity.CompartmentStock;
@@ -11,9 +13,13 @@ import com.warehouse.exception.BusinessException;
 import com.warehouse.exception.ErrorCode;
 import com.warehouse.repository.AppUserRepository;
 import com.warehouse.repository.CompartmentStockRepository;
+import com.warehouse.repository.IngredientRepository;
 import com.warehouse.repository.StockMovementRepository;
 import com.warehouse.security.CustomUserDetails;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -28,17 +34,20 @@ public class StockService {
     private final CompartmentStockRepository compartmentStockRepository;
     private final StockMovementRepository stockMovementRepository;
     private final AppUserRepository appUserRepository;
+    private final IngredientRepository ingredientRepository;
 
     public StockService(
             CompartmentService compartmentService,
             CompartmentStockRepository compartmentStockRepository,
             StockMovementRepository stockMovementRepository,
-            AppUserRepository appUserRepository
+            AppUserRepository appUserRepository,
+            IngredientRepository ingredientRepository
     ) {
         this.compartmentService = compartmentService;
         this.compartmentStockRepository = compartmentStockRepository;
         this.stockMovementRepository = stockMovementRepository;
         this.appUserRepository = appUserRepository;
+        this.ingredientRepository = ingredientRepository;
     }
 
     @Transactional
@@ -47,6 +56,42 @@ public class StockService {
             Long compartmentId,
             BigDecimal quantity
     ) {
+        return addStock(ingredient, compartmentId, quantity);
+    }
+
+    @Transactional
+    public StockMovementResponse addStock(StockMovementRequest request) {
+        Ingredient ingredient = ingredientRepository.findById(request.ingredienteId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.INGREDIENT_NOT_FOUND));
+        return toResponse(addStock(ingredient, request.compartimentoId(), request.quantidade()));
+    }
+
+    @Transactional
+    public StockMovementResponse removeStock(StockMovementRequest request) {
+        return toResponse(removeStock(request.compartimentoId(), request.ingredienteId(), request.quantidade()));
+    }
+
+    @Transactional(readOnly = true)
+    public Page<StockMovementResponse> findHistory(String sortBy, String order, int page, int size) {
+        if (page < 0 || size < 1 || size > 100 || (long) page * size > Integer.MAX_VALUE) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        }
+
+        Sort.Direction direction = switch (order) {
+            case "asc" -> Sort.Direction.ASC;
+            case "desc" -> Sort.Direction.DESC;
+            default -> throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        };
+        Sort sort = switch (sortBy) {
+            case "date" -> Sort.by(new Sort.Order(direction, "createdAt"), Sort.Order.asc("compartment.code"));
+            case "compartment" -> Sort.by(new Sort.Order(direction, "compartment.code"), Sort.Order.desc("createdAt"));
+            default -> throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        };
+        PageRequest pageRequest = PageRequest.of(page, size, sort.and(Sort.by("id")));
+        return stockMovementRepository.findAll(pageRequest).map(this::toResponse);
+    }
+
+    private StockMovement addStock(Ingredient ingredient, Long compartmentId, BigDecimal quantity) {
         validateQuantity(quantity);
         Compartment compartment = compartmentService.validateAndLock(
                 compartmentId,
@@ -71,7 +116,9 @@ public class StockService {
         AppUser user = getAuthenticatedUser();
         CompartmentStock stock = compartmentStockRepository
                 .findByCompartmentIdAndIngredientId(compartmentId, ingredientId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.INSUFFICIENT_STOCK));
+                .orElseThrow(() -> new BusinessException(ingredientRepository.existsById(ingredientId)
+                        ? ErrorCode.INSUFFICIENT_STOCK
+                        : ErrorCode.INGREDIENT_NOT_FOUND));
 
         BigDecimal remaining = stock.getQuantity().subtract(quantity);
         if (remaining.signum() < 0) {
@@ -92,6 +139,23 @@ public class StockService {
         }
 
         return movement;
+    }
+
+    private StockMovementResponse toResponse(StockMovement movement) {
+        Ingredient ingredient = movement.getIngredient();
+        Compartment compartment = movement.getCompartment();
+        return new StockMovementResponse(
+                movement.getId(),
+                movement.getMovementType(),
+                ingredient.getId(),
+                ingredient.getName(),
+                ingredient.getIngredientType().getName(),
+                movement.getQuantity(),
+                compartment.getId(),
+                compartment.getCode(),
+                movement.getUser().getLogin(),
+                movement.getCreatedAt()
+        );
     }
 
     private void validateQuantity(BigDecimal quantity) {

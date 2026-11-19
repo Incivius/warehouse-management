@@ -45,7 +45,7 @@ public class AuthService {
             return new LoginResponse(
                     token,
                     "Bearer",
-                    3600,
+                    jwtService.getExpirationInSeconds(),
                     new LoginResponse.UserInfo(
                             userDetails.getId(),
                             userDetails.getName(),

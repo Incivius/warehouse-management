@@ -5,6 +5,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
+import java.util.UUID;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 @DisplayName("Testes de criptografia de senha")
@@ -17,7 +19,7 @@ class PasswordEncoderTest {
     @DisplayName("Deve gerar hash BCrypt e validar a senha original")
     void shouldEncodeAndValidatePassword() {
         // Arrange
-        String password = "admin123";
+        String password = UUID.randomUUID().toString();
 
         // Act
         String encodedPassword = passwordEncoder.encode(password);
@@ -26,15 +28,13 @@ class PasswordEncoderTest {
         assertNotNull(encodedPassword);
         assertNotEquals(password, encodedPassword);
         assertTrue(passwordEncoder.matches(password, encodedPassword));
-
-        System.out.println("Hash BCrypt gerado: " + encodedPassword);
     }
 
     @Test
     @DisplayName("Não deve validar uma senha incorreta")
     void shouldRejectInvalidPassword() {
         // Arrange
-        String password = "admin123";
+        String password = UUID.randomUUID().toString();
         String encodedPassword = passwordEncoder.encode(password);
 
         // Act
@@ -48,28 +48,14 @@ class PasswordEncoderTest {
     }
 
     @Test
-    @DisplayName("Deve gerar hashes BCrypt para os usuários iniciais")
-    void shouldGenerateInitialUserPasswordHashes() {
-        // Arrange
-        String[][] users = {
-                {"admin", "admin123"},
-                {"operador1", "op123456"},
-                {"operador2", "op654321"}
-        };
-
-        // Act & Assert
-        for (String[] user : users) {
-            String login = user[0];
-            String password = user[1];
-
+    @DisplayName("Deve gerar hashes BCrypt para diferentes senhas")
+    void shouldGenerateHashesForDifferentPasswords() {
+        for (int index = 0; index < 3; index++) {
+            String password = UUID.randomUUID().toString();
             String hash = passwordEncoder.encode(password);
 
             assertNotNull(hash);
             assertTrue(passwordEncoder.matches(password, hash));
-
-            System.out.println("Login: " + login);
-            System.out.println("Hash: " + hash);
-            System.out.println("----------------------");
         }
     }
 }

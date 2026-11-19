@@ -1,0 +1,575 @@
+{
+  "info": {
+    "name": "Warehouse Management API - Completa",
+    "description": "Coleção para testar a API local. As credenciais iniciais são públicas e exclusivas para avaliação local. Execute Login primeiro para preencher {{token}}.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "login",
+      "value": "admin"
+    },
+    {
+      "key": "senha",
+      "value": "admin123"
+    },
+    {
+      "key": "ingredientName",
+      "value": "Arroz"
+    },
+    {
+      "key": "ingredientType",
+      "value": "DRY"
+    },
+    {
+      "key": "ingredientId",
+      "value": "1"
+    },
+    {
+      "key": "compartmentId",
+      "value": "1"
+    }
+  ],
+  "item": [
+    {
+      "name": "Autenticação",
+      "item": [
+        {
+          "name": "Login (salva JWT automaticamente)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Execute primeiro. O script salva accessToken em {{token}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"login\": \"{{login}}\",\n  \"senha\": \"{{senha}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Login respondeu HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const token = body.accessToken;",
+                  "pm.test('JWT retornado', () => pm.expect(token).to.be.a('string').and.not.empty);",
+                  "if (token) pm.environment.set('token', token);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Ingredientes",
+      "item": [
+        {
+          "name": "Cadastrar ingrediente (sem estoque inicial)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingredientes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingredientes"
+              ]
+            },
+            "description": "Cria o ingrediente. Tipos: DRY, LIQUID ou REFRIGERATED.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nome\": \"{{ingredientName}}\",\n  \"tipo\": \"{{ingredientType}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Criado ou aceito', () => pm.expect(pm.response.code).to.be.oneOf([201, 200]));",
+                  "try { const b=pm.response.json(); if (b.id) pm.environment.set('ingredientId', b.id); } catch(e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cadastrar ingrediente (com estoque inicial)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingredientes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingredientes"
+              ]
+            },
+            "description": "Cria ingrediente e realiza a entrada inicial na mesma operação. Ajuste o compartimento conforme o estado atual do banco.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nome\": \"Farinha de trigo\",\n  \"tipo\": \"DRY\",\n  \"quantidade\": 100,\n  \"compartimentoId\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Ingrediente criado', () => pm.expect(pm.response.code).to.be.oneOf([201, 200]));",
+                  "try { const b=pm.response.json(); if (b.id) pm.environment.set('ingredientId', b.id); } catch(e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar ingredientes",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingredientes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingredientes"
+              ]
+            },
+            "description": "Lista os ingredientes cadastrados."
+          }
+        },
+        {
+          "name": "Buscar ingrediente por ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingredientes/{{ingredientId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingredientes",
+                "{{ingredientId}}"
+              ]
+            },
+            "description": "Utiliza o ID salvo pela variável ingredientId."
+          }
+        },
+        {
+          "name": "Consultar volume total por tipo",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingredientes/volume",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingredientes",
+                "volume"
+              ]
+            },
+            "description": "Consulta o saldo agregado por tipo de ingrediente."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Estoque",
+      "item": [
+        {
+          "name": "Entrada de estoque",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/estoque/entrada",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "estoque",
+                "entrada"
+              ]
+            },
+            "description": "Registra entrada para ingrediente existente. O responsável é obtido do JWT.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ingredienteId\": \"{{ingredientId}}\",\n  \"compartimentoId\": \"{{compartmentId}}\",\n  \"quantidade\": 25\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Entrada processada', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Saída de estoque",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/estoque/saida",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "estoque",
+                "saida"
+              ]
+            },
+            "description": "Registra saída. A quantidade não pode superar o saldo disponível.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ingredienteId\": \"{{ingredientId}}\",\n  \"compartimentoId\": \"{{compartmentId}}\",\n  \"quantidade\": 5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Saída processada', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Compartimentos",
+      "item": [
+        {
+          "name": "Disponíveis para armazenamento",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/compartimentos/disponiveis?quantidade=50&tipo=DRY",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "compartimentos",
+                "disponiveis"
+              ],
+              "query": [
+                {
+                  "key": "quantidade",
+                  "value": "50",
+                  "disabled": false
+                },
+                {
+                  "key": "tipo",
+                  "value": "DRY",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Filtra compartimentos com espaço livre suficiente para o tipo e a quantidade informados."
+          }
+        },
+        {
+          "name": "Disponíveis para venda/retirada",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/compartimentos/disponiveis-para-venda?tipo=DRY",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "compartimentos",
+                "disponiveis-para-venda"
+              ],
+              "query": [
+                {
+                  "key": "tipo",
+                  "value": "DRY",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Retorna compartimentos com saldo positivo do tipo solicitado."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Histórico",
+      "item": [
+        {
+          "name": "Histórico - padrão (data desc)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/historico?page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "historico"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0",
+                  "disabled": false
+                },
+                {
+                  "key": "size",
+                  "value": "20",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Consulta paginada. O padrão é data decrescente, com 20 registros por página."
+          }
+        },
+        {
+          "name": "Histórico - data crescente",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/historico?sortBy=date&order=asc&page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "historico"
+              ],
+              "query": [
+                {
+                  "key": "sortBy",
+                  "value": "date",
+                  "disabled": false
+                },
+                {
+                  "key": "order",
+                  "value": "asc",
+                  "disabled": false
+                },
+                {
+                  "key": "page",
+                  "value": "0",
+                  "disabled": false
+                },
+                {
+                  "key": "size",
+                  "value": "20",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Ordena pela data em ordem crescente."
+          }
+        },
+        {
+          "name": "Histórico - compartimento",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/historico?sortBy=compartment&order=asc&page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "historico"
+              ],
+              "query": [
+                {
+                  "key": "sortBy",
+                  "value": "compartment",
+                  "disabled": false
+                },
+                {
+                  "key": "order",
+                  "value": "asc",
+                  "disabled": false
+                },
+                {
+                  "key": "page",
+                  "value": "0",
+                  "disabled": false
+                },
+                {
+                  "key": "size",
+                  "value": "20",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Ordena pelo compartimento."
+          }
+        }
+      ]
+    }
+  ]
+}
