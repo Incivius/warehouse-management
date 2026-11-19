@@ -1,5 +1,6 @@
 package com.warehouse;
 
+import com.warehouse.repository.IngredientRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -8,6 +9,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -19,10 +21,45 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class StockConcurrencyTests extends WarehouseIntegrationTestSupport {
 
     @Autowired private PlatformTransactionManager transactionManager;
+    @Autowired private IngredientRepository ingredients;
 
     @DynamicPropertySource
     static void configureSchema(DynamicPropertyRegistry registry) {
         isolateTestSchema(registry, "concurrency");
+    }
+
+    @Test
+    void concurrentRegistrationsReuseOneIngredientAndBothStockEntriesCommit() throws Exception {
+        var transaction = new TransactionTemplate(transactionManager);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var requests = transaction.execute(ignored -> {
+                long dry = jdbc.queryForObject("SELECT id FROM ingredient_type WHERE name = 'DRY'", Long.class);
+                ingredients.lockIdentity(dry, "Farinha de Trigo");
+                var first = executor.submit(() -> createWithStock("Farinha de Trigo", "DRY", 100, 1));
+                var second = executor.submit(() -> createWithStock(" FARINHA  DE TRIGO ", "DRY", 200, 1));
+
+                await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                        assertThat(jdbc.queryForObject("""
+                                SELECT count(*) FROM pg_stat_activity
+                                WHERE wait_event_type = 'Lock' AND query LIKE '%pg_advisory_xact_lock%'
+                                """, Integer.class)).isEqualTo(2));
+                return List.of(first, second);
+            });
+
+            var first = requests.getFirst().get(10, TimeUnit.SECONDS);
+            var second = requests.getLast().get(10, TimeUnit.SECONDS);
+            assertThat(List.of(first, second))
+                    .extracting(result -> result.andReturn().getResponse().getStatus())
+                    .containsExactlyInAnyOrder(201, 200);
+            first.andExpect(jsonPath("$.id").value(1));
+            second.andExpect(jsonPath("$.id").value(1));
+        }
+
+        assertThat(count("ingredient")).isEqualTo(1);
+        assertThat(count("compartment_stock")).isEqualTo(1);
+        assertThat(count("stock_movement")).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT quantity FROM compartment_stock", BigDecimal.class))
+                .isEqualByComparingTo("300");
     }
 
     @Test

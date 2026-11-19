@@ -33,6 +33,27 @@ public interface CompartmentRepository
     """)
     List<CompartmentBalance> findBalances();
 
+    @Query(value = """
+        SELECT c.id AS "compartmentId", c.code AS "compartmentCode", c.status AS status,
+            latest.created_at AS "lastMovement", s.id AS "stockId",
+            s.quantity AS quantity, i.id AS "ingredientId", i.name AS "ingredientName",
+            t.name AS "ingredientType",
+            COALESCE(t.max_capacity, dry.max_capacity) AS capacity,
+            COALESCE(t.unit_of_measure, dry.unit_of_measure) AS unit
+        FROM compartment c
+        LEFT JOIN (
+            SELECT compartment_id, MAX(created_at) AS created_at
+            FROM stock_movement
+            GROUP BY compartment_id
+        ) latest ON latest.compartment_id = c.id
+        LEFT JOIN compartment_stock s ON s.compartment_id = c.id AND s.quantity > 0
+        LEFT JOIN ingredient i ON i.id = s.ingredient_id
+        LEFT JOIN ingredient_type t ON t.id = i.ingredient_type_id
+        LEFT JOIN ingredient_type dry ON dry.name = 'DRY'
+        ORDER BY c.code, i.id
+    """, nativeQuery = true)
+    List<StockSnapshotRow> findStockSnapshot();
+
     @Query("""
         SELECT new com.warehouse.dto.response.CompartmentAvailabilityResponse(
             c.id, c.code, SUM(s.quantity), t.unitOfMeasure
@@ -55,5 +76,19 @@ public interface CompartmentRepository
         Long getCurrentTypeId();
         LocalDateTime getLastMovementAt();
         BigDecimal getQuantity();
+    }
+
+    interface StockSnapshotRow {
+        Long getCompartmentId();
+        String getCompartmentCode();
+        String getStatus();
+        LocalDateTime getLastMovement();
+        Long getStockId();
+        BigDecimal getQuantity();
+        Long getIngredientId();
+        String getIngredientName();
+        String getIngredientType();
+        BigDecimal getCapacity();
+        String getUnit();
     }
 }

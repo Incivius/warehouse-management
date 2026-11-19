@@ -2,9 +2,11 @@ package com.warehouse.controller;
 
 import com.warehouse.dto.request.StockMovementRequest;
 import com.warehouse.dto.response.StockMovementResponse;
+import com.warehouse.dto.response.StockSnapshotResponse;
 import com.warehouse.service.StockService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -19,6 +21,11 @@ public class StockController {
 
     public StockController(StockService stockService) {
         this.stockService = stockService;
+    }
+
+    @GetMapping
+    public StockSnapshotResponse findCurrentStock() {
+        return stockService.findCurrentStock();
     }
 
     @PostMapping("/entrada")

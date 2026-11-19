@@ -4,7 +4,8 @@ A URL local padrão é `http://localhost:8080`. Envie `Content-Type: application
 
 - [Autenticação](#autenticação)
 - [Ingredientes](#ingredientes)
-- [Estoque](#estoque)
+- [Consulta do estoque atual](#get-estoque)
+- [Entradas e saídas de estoque](#estoque)
 - [Compartimentos](#compartimentos)
 - [Histórico e paginação](#histórico)
 - [Valores aceitos](#valores-aceitos)
@@ -99,7 +100,7 @@ O modelo de ingrediente retornado pelas consultas também compõe a resposta de 
 
 ### `POST /ingredientes`
 
-Cadastra um ingrediente, com opção de registrar uma entrada inicial no estoque.
+Cadastra um ingrediente ou reutiliza o registro existente quando o nome e o tipo coincidem. A comparação ignora maiúsculas, minúsculas e espaços nas pontas e trata espaços repetidos como um só. O nome cadastrado fica armazenado com a grafia original. Nomes iguais com tipos diferentes identificam ingredientes distintos. Quando há duplicatas legadas, esta rota reutiliza o menor ID e mantém os vínculos dos demais registros.
 
 **Payload JSON**
 
@@ -107,24 +108,34 @@ Cadastra um ingrediente, com opção de registrar uma entrada inicial no estoque
 | --- | --- | --- | --- |
 | `nome` | string | Sim | Deve conter caracteres além de espaços e ter até 150 caracteres. |
 | `tipo` | string | Sim | `DRY`, `LIQUID` ou `REFRIGERATED`. |
-| `quantidade` | decimal | Com estoque inicial | Quantidade positiva a partir de `0.001`, com até nove dígitos inteiros e três casas decimais. |
-| `compartimentoId` | inteiro | Com estoque inicial | ID positivo de um compartimento existente. |
+| `quantidade` | decimal | Para registrar uma entrada | Quantidade positiva a partir de `0.001`, com até nove dígitos inteiros e três casas decimais. |
+| `compartimentoId` | inteiro | Para entrada no primeiro cadastro | ID positivo de um compartimento existente. Para um ingrediente existente, é opcional quando há quantidade. Sempre exige `quantidade`. |
 
-Para registrar estoque inicial, preencha `quantidade` e `compartimentoId` juntos. No cadastro simples, envie apenas `nome` e `tipo`.
+| Cenário | Resultado |
+| --- | --- |
+| Ingrediente novo, sem quantidade | `201 Created`. Cadastra o ingrediente. |
+| Ingrediente novo, com quantidade e compartimento | `201 Created`. Cadastra o ingrediente e registra a entrada inicial. |
+| Ingrediente existente, sem quantidade | `200 OK`. Retorna o mesmo ID, sem gerar movimentação, independentemente do saldo atual. |
+| Ingrediente existente, com quantidade e compartimento | `200 OK`. Registra uma entrada no compartimento informado, criando ou somando ao saldo. |
+| Ingrediente existente, com quantidade e sem compartimento | `200 OK`. Registra uma entrada no primeiro compartimento elegível por código, com espaço para a quantidade inteira. |
+
+A entrada segue as regras de capacidade, compatibilidade por tipo e restrição temporal. O responsável é identificado pelo JWT. Se a entrada falhar, toda a operação é revertida. Repetir uma requisição bem-sucedida com quantidade registra uma nova entrada.
+
+**Exemplo de cadastro com estoque inicial**
 
 ```json
 {"nome":"Arroz","tipo":"DRY","quantidade":12.125,"compartimentoId":1}
 ```
 
-**Resposta · `201 Created`**
+**Resposta · `201 Created` ou `200 OK`**
 
-Além de `id`, `nome` e `tipo` do ingrediente, a resposta inclui os campos abaixo. No cadastro simples, os três retornam `null`.
+Além de `id`, `nome` e `tipo` do ingrediente, a resposta inclui os campos abaixo. Em uma chamada sem entrada, os três retornam `null`, mesmo que o ingrediente já tenha saldo.
 
 | Campo | Tipo | Descrição |
 | --- | --- | --- |
 | `quantidade` | decimal ou `null` | Quantidade adicionada ao estoque. |
 | `compartimento` | objeto ou `null` | Destino da entrada, com `id` (inteiro) e `codigo` (string). |
-| `movimentacao` | objeto ou `null` | Entrada inicial, com `id` (inteiro), `tipo` (string, sempre `INBOUND`), `quantidade` (decimal), `responsavel` (string com o login) e `dataHora` (string). |
+| `movimentacao` | objeto ou `null` | Entrada registrada, com `id` (inteiro), `tipo` (string, sempre `INBOUND`), `quantidade` (decimal), `responsavel` (string com o login) e `dataHora` (string). |
 
 ```json
 {
@@ -143,7 +154,38 @@ Além de `id`, `nome` e `tipo` do ingrediente, a resposta inclui os campos abaix
 }
 ```
 
-**Erros** — `400 INVALID_REQUEST` para dados inválidos. A entrada inicial pode retornar `400 INSUFFICIENT_CAPACITY`, `400 INCOMPATIBLE_INGREDIENT_TYPE`, `400 COMPARTMENT_TEMPORARILY_BLOCKED` ou `404 COMPARTMENT_NOT_FOUND`.
+**Exemplo de entrada automática para o mesmo ingrediente**
+
+```json
+{"nome":" arroz ","tipo":"DRY","quantidade":100}
+```
+
+**Resposta · `200 OK`**
+
+```json
+{
+  "id": 1,
+  "nome": "Arroz",
+  "tipo": "DRY",
+  "quantidade": 100,
+  "compartimento": {"id":1,"codigo":"C1"},
+  "movimentacao": {
+    "id": 2,
+    "tipo": "INBOUND",
+    "quantidade": 100,
+    "responsavel": "admin",
+    "dataHora": "2026-11-18T14:01:00"
+  }
+}
+```
+
+| HTTP | Código | Quando ocorre |
+| --- | --- | --- |
+| 400 | `INVALID_REQUEST` | Campos inválidos, compartimento sem quantidade, ou quantidade sem compartimento no primeiro cadastro. |
+| 400 | `INSUFFICIENT_CAPACITY` | O compartimento informado tem espaço insuficiente ou a seleção automática não encontrou um compartimento elegível para a quantidade inteira. |
+| 400 | `INCOMPATIBLE_INGREDIENT_TYPE` | O compartimento informado armazena um tipo diferente. |
+| 400 | `COMPARTMENT_TEMPORARILY_BLOCKED` | O compartimento informado está bloqueado ou temporariamente restrito para troca de tipo. |
+| 404 | `COMPARTMENT_NOT_FOUND` | O compartimento informado não existe. |
 
 ### `GET /ingredientes`
 
@@ -202,6 +244,88 @@ Array com um objeto por tipo, em ordem alfabética de `tipo`.
 **Erros** — Aplica os erros comuns das rotas protegidas.
 
 ## Estoque
+
+### `GET /estoque`
+
+Retorna o estoque atual de todos os compartimentos, incluindo os vazios, em ordem de código. Faça a requisição sem corpo ou parâmetros e envie o JWT.
+
+```http
+GET /estoque HTTP/1.1
+Host: localhost:8080
+Authorization: Bearer <accessToken>
+```
+
+**Resposta · `200 OK`**
+
+O objeto contém o array `compartimentos`. Cada item tem os campos abaixo.
+
+| Campo | Tipo | Descrição |
+| --- | --- | --- |
+| `id` | inteiro | ID do compartimento. |
+| `codigo` | string | Código do compartimento, de `C1` a `C5`. |
+| `status` | string | `EMPTY`, `OCCUPIED` ou `BLOCKED`. |
+| `tipo` | string ou `null` | Tipo armazenado, conforme os [valores aceitos](#valores-aceitos). Sem saldo, retorna `null`. |
+| `capacidadeMaxima` | decimal | Capacidade do tipo armazenado. Sem saldo, usa os dados de `DRY` como referência. |
+| `unidadeMedida` | string | `KG` ou `L`, conforme a capacidade exibida. |
+| `quantidadeOcupada` | decimal | Soma dos saldos positivos atuais de `compartment_stock` no compartimento. |
+| `capacidadeDisponivel` | decimal | Capacidade máxima menos a quantidade ocupada, com mínimo de zero. |
+| `percentualOcupacao` | decimal | Quantidade ocupada dividida pela capacidade máxima, vezes 100, arredondada para duas casas. Sem capacidade, retorna zero. |
+| `ultimaMovimentacao` | string ou `null` | Data e hora da entrada ou saída mais recente, inclusive se o compartimento ficou vazio. Retorna `null` se nunca houve movimentação. |
+| `ingredientes` | array | Ingredientes com saldo positivo, em ordem de ID. Sem saldo, retorna `[]`. |
+
+Cada item de `ingredientes` tem os campos abaixo.
+
+| Campo | Tipo | Descrição |
+| --- | --- | --- |
+| `estoqueId` | inteiro | ID do registro em `compartment_stock`. |
+| `ingredienteId` | inteiro | ID do ingrediente no cadastro. |
+| `nome` | string | Nome cadastrado. |
+| `tipo` | string | Tipo de ingrediente. |
+| `quantidade` | decimal | Saldo atual do ingrediente no compartimento. |
+| `unidadeMedida` | string | `KG` ou `L`, conforme o tipo. |
+
+A capacidade informada descreve o espaço físico. Para verificar se uma entrada pode ser armazenada, use a [consulta de compartimentos disponíveis](#get-compartimentosdisponiveis), que considera tipo, quantidade e bloqueios.
+
+Exemplo de resposta com os dois primeiros compartimentos.
+
+```json
+{
+  "compartimentos": [
+    {
+      "id": 1,
+      "codigo": "C1",
+      "status": "OCCUPIED",
+      "tipo": "DRY",
+      "capacidadeMaxima": 600,
+      "unidadeMedida": "KG",
+      "quantidadeOcupada": 112.125,
+      "capacidadeDisponivel": 487.875,
+      "percentualOcupacao": 18.69,
+      "ultimaMovimentacao": "2026-11-18T14:01:00",
+      "ingredientes": [
+        {"estoqueId":1,"ingredienteId":1,"nome":"Arroz","tipo":"DRY","quantidade":112.125,"unidadeMedida":"KG"}
+      ]
+    },
+    {
+      "id": 2,
+      "codigo": "C2",
+      "status": "EMPTY",
+      "tipo": null,
+      "capacidadeMaxima": 600,
+      "unidadeMedida": "KG",
+      "quantidadeOcupada": 0,
+      "capacidadeDisponivel": 600,
+      "percentualOcupacao": 0,
+      "ultimaMovimentacao": null,
+      "ingredientes": []
+    }
+  ]
+}
+```
+
+**Erros** — Aplica os [erros comuns das rotas protegidas](#respostas-de-erro).
+
+### Payload de entrada e saída
 
 **Payload JSON** de `POST /estoque/entrada` e `POST /estoque/saida`
 

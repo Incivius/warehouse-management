@@ -8,6 +8,7 @@ API REST desenvolvida em Java e Spring Boot para gerenciar ingredientes, estoque
 
 - [Autenticação e JWT](docs/api.md#autenticação)
 - [Cadastro e consulta de ingredientes](docs/api.md#ingredientes)
+- [Consulta detalhada do estoque atual](docs/api.md#get-estoque)
 - [Entradas e saídas de estoque](docs/api.md#estoque)
 - [Disponibilidade de compartimentos](docs/api.md#compartimentos)
 - [Paginação e ordenação do histórico](docs/api.md#paginação-e-ordenação)
@@ -99,9 +100,10 @@ A resposta traz o JWT em `accessToken`. Envie o cabeçalho `Authorization: Beare
 
 ## Visão geral do projeto
 
-- Cadastro e consulta de ingredientes, com lançamento opcional de estoque no cadastro.
+- Cadastro e consulta de ingredientes, com reaproveitamento por nome e tipo e lançamento opcional de estoque pela rota de cadastro.
 - Entradas e saídas em cinco compartimentos, com controle de capacidade e compatibilidade por tipo.
 - Consultas de saldo por tipo, espaço para armazenamento e estoque para retirada.
+- Visão do estoque atual por compartimento, com saldos por ingrediente, capacidade livre e percentual de ocupação.
 - Histórico paginado de movimentações com identificação do responsável.
 
 ## Arquitetura
@@ -167,4 +169,6 @@ A API usa um backend Spring Boot com PostgreSQL. O modelo conceitual mostra como
 
 1. Importe a [coleção Warehouse Management](postman/warehouse-management.postman_collection.json) e o [ambiente local](postman/warehouse-local.postman_environment.json).
 2. Selecione o ambiente **Warehouse - Local** e execute **Login (salva JWT automaticamente)**. O ambiente já contém as credenciais públicas de avaliação e a requisição salva o JWT na variável `token`.
-3. Execute **Cadastrar ingrediente (sem estoque inicial)** para preencher `ingredientId`. Depois execute **Entrada de estoque** e **Saída de estoque**, nessa ordem. Os exemplos usam C1 (`compartmentId=1`) e dependem da capacidade e do saldo disponíveis.
+3. Execute **Cadastrar ingrediente (sem estoque inicial)** para preencher `ingredientId`. Repita a chamada para conferir que ela retorna `200 OK` com o mesmo ID.
+4. Execute **Registrar entrada automática pelo cadastro** e **Consultar estoque atual por compartimento** para verificar o destino e o saldo. Ajuste `registrationQuantity` no ambiente para mudar a quantidade da entrada.
+5. Para testar a movimentação com destino explícito, execute **Entrada de estoque** e **Saída de estoque**, nessa ordem. Os exemplos usam C1 (`compartmentId=1`) e dependem da capacidade e do saldo disponíveis.
