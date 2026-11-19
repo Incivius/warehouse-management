@@ -187,6 +187,17 @@ Além de `id`, `nome` e `tipo` do ingrediente, a resposta inclui os campos abaix
 | 400 | `COMPARTMENT_TEMPORARILY_BLOCKED` | O compartimento informado está bloqueado ou temporariamente restrito para troca de tipo. |
 | 404 | `COMPARTMENT_NOT_FOUND` | O compartimento informado não existe. |
 
+Se o ingrediente for novo e a requisição trouxer `quantidade` sem `compartimentoId`, a API responde com `400 Bad Request`.
+
+```json
+{
+  "code": "INVALID_REQUEST",
+  "message": "Para cadastrar um ingrediente novo com estoque inicial, envie compartimentoId junto com quantidade. Para cadastrar sem estoque, omita quantidade.",
+  "status": 400,
+  "timestamp": "2026-11-19T10:00:00"
+}
+```
+
 ### `GET /ingredientes`
 
 Lista todos os ingredientes em ordem crescente de ID. Faça a requisição sem corpo ou parâmetros.

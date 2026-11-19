@@ -41,7 +41,9 @@ public class IngredientService {
     @Transactional
     public Registration create(IngredientCreateRequest request) {
         if (request.quantidade() == null && request.compartimentoId() != null) {
-            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+            throw new BusinessException(ErrorCode.INVALID_REQUEST,
+                    "Envie quantidade junto com compartimentoId para registrar uma entrada, "
+                            + "ou omita compartimentoId para cadastrar sem estoque.");
         }
 
         IngredientType ingredientType = ingredientTypeService.findByName(request.tipo());
@@ -50,7 +52,9 @@ public class IngredientService {
         var existing = ingredientRepository.findByIdentity(ingredientType.getId(), request.nome());
         boolean created = existing.isEmpty();
         if (created && request.quantidade() != null && request.compartimentoId() == null) {
-            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+            throw new BusinessException(ErrorCode.INVALID_REQUEST,
+                    "Para cadastrar um ingrediente novo com estoque inicial, envie compartimentoId junto com quantidade. "
+                            + "Para cadastrar sem estoque, omita quantidade.");
         }
 
         Ingredient ingredient = existing.orElseGet(() -> {

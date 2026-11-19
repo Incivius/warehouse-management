@@ -167,8 +167,17 @@ A API usa um backend Spring Boot com PostgreSQL. O modelo conceitual mostra como
 
 ## Postman
 
-1. Importe a [coleção Warehouse Management](postman/warehouse-management.postman_collection.json) e o [ambiente local](postman/warehouse-local.postman_environment.json).
-2. Selecione o ambiente **Warehouse - Local** e execute **Login (salva JWT automaticamente)**. O ambiente já contém as credenciais públicas de avaliação e a requisição salva o JWT na variável `token`.
-3. Execute **Cadastrar ingrediente (sem estoque inicial)** para preencher `ingredientId`. Repita a chamada para conferir que ela retorna `200 OK` com o mesmo ID.
-4. Execute **Registrar entrada automática pelo cadastro** e **Consultar estoque atual por compartimento** para verificar o destino e o saldo. Ajuste `registrationQuantity` no ambiente para mudar a quantidade da entrada.
-5. Para testar a movimentação com destino explícito, execute **Entrada de estoque** e **Saída de estoque**, nessa ordem. Os exemplos usam C1 (`compartmentId=1`) e dependem da capacidade e do saldo disponíveis.
+### Importar a coleção e ativar o ambiente
+
+1. Com a API em execução, abra um workspace no Postman. Clique em **Import** ou abra **Use resources or import** e selecione **Import**. Escolha ou arraste os dois arquivos JSON da pasta `postman`. [Guia de importação do Postman](https://learning.postman.com/docs/getting-started/importing-and-exporting/importing-data)
+   - A [coleção `warehouse-management.postman_collection.json`](postman/warehouse-management.postman_collection.json) aparece em **Collections** como **Warehouse Management API - Completa**.
+   - O [ambiente `warehouse-local.postman_environment.json`](postman/warehouse-local.postman_environment.json) aparece em **Environments** como **Warehouse - Local**.
+2. No seletor de ambientes no canto superior direito, escolha **Warehouse - Local**. Importar o arquivo adiciona o ambiente ao workspace. Selecioná-lo ativa as variáveis da API local, incluindo `baseUrl` e `token`. [Guia de ambientes do Postman](https://learning.postman.com/docs/use/send-requests/variables/managing-environments/)
+3. Na coleção importada, abra **Autenticação → Login (salva JWT automaticamente)** e clique em **Send**. A resposta deve ser `200 OK` com o campo `accessToken`. O script da requisição salva esse valor em `token` no ambiente ativo.
+4. Abra o painel **Variables** e confira se `token` está preenchida em **Warehouse - Local**. Se o login retornou `200 OK` e a variável ficou vazia, selecione **Warehouse - Local** e envie novamente a requisição de login da coleção. Mantenha esse ambiente ativo para que as rotas protegidas usem o JWT.
+
+### Testar o cadastro e o estoque
+
+1. Execute **Cadastrar ingrediente (sem estoque inicial)** para preencher `ingredientId`. Repita a chamada para conferir que ela retorna `200 OK` com o mesmo ID.
+2. Execute **Registrar entrada automática pelo cadastro** e **Consultar estoque atual por compartimento** para verificar o destino e o saldo. Ajuste `registrationQuantity` no ambiente para mudar a quantidade da entrada.
+3. Para testar a movimentação com destino explícito, execute **Entrada de estoque** e **Saída de estoque**, nessa ordem. Os exemplos usam C1 (`compartmentId=1`) e dependem da capacidade e do saldo disponíveis.

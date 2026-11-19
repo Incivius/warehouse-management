@@ -181,10 +181,34 @@ class IngredientControllerTests extends WarehouseIntegrationTestSupport {
                 """, Boolean.class)).isTrue();
     }
 
+    @Test
+    void explainsRequiredCompartmentWhenCreatingWithInitialStock() throws Exception {
+        create("""
+                {"nome":"Arroz","tipo":"DRY","quantidade":1}
+                """)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.message").value(
+                        "Para cadastrar um ingrediente novo com estoque inicial, envie compartimentoId junto com quantidade. "
+                                + "Para cadastrar sem estoque, omita quantidade."));
+        assertThat(count("ingredient")).isZero();
+    }
+
+    @Test
+    void explainsRequiredQuantityWhenCompartmentIsProvided() throws Exception {
+        create("""
+                {"nome":"Arroz","tipo":"DRY","compartimentoId":1}
+                """)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.message").value(
+                        "Envie quantidade junto com compartimentoId para registrar uma entrada, "
+                                + "ou omita compartimentoId para cadastrar sem estoque."));
+        assertThat(count("ingredient")).isZero();
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
-            "{\"nome\":\"Arroz\",\"tipo\":\"DRY\",\"quantidade\":1}",
-            "{\"nome\":\"Arroz\",\"tipo\":\"DRY\",\"compartimentoId\":1}",
             "{\"nome\":\"Arroz\",\"tipo\":\"DESCONHECIDO\"}",
             "{\"nome\":\"Arroz\",\"tipo\":\"DRY\",\"quantidade\":0,\"compartimentoId\":1}",
             "{\"nome\":\"Arroz\",\"tipo\":\"DRY\",\"quantidade\":-1,\"compartimentoId\":1}",
