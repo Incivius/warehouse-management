@@ -37,7 +37,10 @@ public class CompartmentService {
 
     @Transactional(readOnly = true)
     public List<CompartmentAvailabilityResponse> findAvailable(String typeName, BigDecimal quantity) {
-        IngredientType type = ingredientTypeService.findByName(typeName);
+        return findAvailable(ingredientTypeService.findByName(typeName), quantity);
+    }
+
+    private List<CompartmentAvailabilityResponse> findAvailable(IngredientType type, BigDecimal quantity) {
         LocalDate today = LocalDate.now();
         List<CompartmentAvailabilityResponse> available = new ArrayList<>();
 
@@ -70,20 +73,40 @@ public class CompartmentService {
             BigDecimal quantity
     ) {
         Compartment compartment = lockById(compartmentId);
+        ErrorCode restriction = inboundRestriction(compartment, ingredientType, quantity);
+        if (restriction != null) {
+            throw new BusinessException(restriction);
+        }
+        return compartment;
+    }
+
+    @Transactional
+    public Compartment selectAndLock(IngredientType type, BigDecimal quantity) {
+        for (var candidate : findAvailable(type, quantity)) {
+            Compartment compartment = compartmentRepository.findByIdForUpdate(candidate.id()).orElse(null);
+            if (compartment != null && !isBlocked(compartment.getStatus())
+                    && inboundRestriction(compartment, type, quantity) == null) {
+                return compartment;
+            }
+        }
+        throw new BusinessException(ErrorCode.INSUFFICIENT_CAPACITY);
+    }
+
+    private ErrorCode inboundRestriction(Compartment compartment, IngredientType ingredientType, BigDecimal quantity) {
         IngredientType currentType = compartment.getCurrentType();
         ErrorCode restriction = typeRestriction(
                 compartment.getStatus(), currentType == null ? null : currentType.getId(),
                 compartment.getLastMovementAt(), ingredientType.getId(), LocalDate.now());
         if (restriction != null) {
-            throw new BusinessException(restriction);
+            return restriction;
         }
 
         BigDecimal currentQuantity = compartmentStockRepository.sumQuantityByCompartmentId(compartment.getId());
         if (remainingCapacity(ingredientType, currentQuantity).compareTo(quantity) < 0) {
-            throw new BusinessException(ErrorCode.INSUFFICIENT_CAPACITY);
+            return ErrorCode.INSUFFICIENT_CAPACITY;
         }
 
-        return compartment;
+        return null;
     }
 
     Compartment lockById(Long compartmentId) {

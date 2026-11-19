@@ -29,11 +29,9 @@ public class IngredientController {
     public ResponseEntity<IngredientCreateResponse> create(
             @Valid @RequestBody IngredientCreateRequest request
     ) {
-        IngredientCreateResponse response = ingredientService.create(request);
-
-        return ResponseEntity
-                .status(HttpStatus.CREATED)
-                .body(response);
+        var registration = ingredientService.create(request);
+        return ResponseEntity.status(registration.created() ? HttpStatus.CREATED : HttpStatus.OK)
+                .body(registration.response());
     }
 
     @GetMapping

@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Warehouse Management API - Completa",
-    "description": "Coleção para testar a API local. As credenciais iniciais são públicas e exclusivas para avaliação local. Execute Login primeiro para preencher {{token}}.",
+    "description": "Coleção para testar a API local. Selecione o ambiente Warehouse - Local e execute Login primeiro para preencher {{token}}. Para testar o cadastro inteligente, cadastre o ingrediente sem estoque, execute a entrada automática pelo cadastro e consulte o estoque por compartimento.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -46,6 +46,10 @@
     {
       "key": "compartmentId",
       "value": "1"
+    },
+    {
+      "key": "registrationQuantity",
+      "value": "100"
     }
   ],
   "item": [
@@ -134,7 +138,7 @@
                 "ingredientes"
               ]
             },
-            "description": "Cria o ingrediente. Tipos: DRY, LIQUID ou REFRIGERATED.",
+            "description": "Cria o ingrediente (201) ou reutiliza seu ID pelo nome normalizado e tipo (200), sem registrar movimentação. Tipos aceitos: DRY, LIQUID ou REFRIGERATED. O script salva o ID em ingredientId.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"nome\": \"{{ingredientName}}\",\n  \"tipo\": \"{{ingredientType}}\"\n}",
@@ -151,8 +155,71 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Criado ou aceito', () => pm.expect(pm.response.code).to.be.oneOf([201, 200]));",
-                  "try { const b=pm.response.json(); if (b.id) pm.environment.set('ingredientId', b.id); } catch(e) {}"
+                  "pm.test('Ingrediente criado ou reutilizado', () => pm.expect(pm.response.code).to.be.oneOf([201, 200]));",
+                  "const body = pm.response.json();",
+                  "pm.test('ID do ingrediente retornado sem movimentação', () => {",
+                  "  pm.expect(body.id).to.be.a('number');",
+                  "  pm.expect(body.quantidade).to.be.null;",
+                  "  pm.expect(body.compartimento).to.be.null;",
+                  "  pm.expect(body.movimentacao).to.be.null;",
+                  "});",
+                  "if ([201, 200].includes(pm.response.code) && Number.isInteger(body.id)) {",
+                  "  pm.environment.set('ingredientId', body.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Registrar entrada automática pelo cadastro",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingredientes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingredientes"
+              ]
+            },
+            "description": "Execute Cadastrar ingrediente (sem estoque inicial) primeiro. Os espaços no nome demonstram o reaproveitamento do cadastro. Sem compartimentoId, a API escolhe o primeiro compartimento elegível por código para toda a quantidade. Cada chamada bem-sucedida registra uma entrada.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nome\": \"  {{ingredientName}}  \",\n  \"tipo\": \"{{ingredientType}}\",\n  \"quantidade\": {{registrationQuantity}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Entrada em ingrediente existente retornou HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Entrada reutilizou o ingrediente e informou o destino', () => {",
+                  "  pm.expect(body.id).to.equal(Number(pm.variables.get('ingredientId')));",
+                  "  pm.expect(body.quantidade).to.equal(Number(pm.variables.get('registrationQuantity')));",
+                  "  pm.expect(body.compartimento.id).to.be.a('number');",
+                  "  pm.expect(body.movimentacao.tipo).to.equal('INBOUND');",
+                  "  pm.expect(body.movimentacao.responsavel).to.equal(pm.variables.get('login'));",
+                  "});"
                 ]
               }
             }
@@ -181,10 +248,10 @@
                 "ingredientes"
               ]
             },
-            "description": "Cria ingrediente e realiza a entrada inicial na mesma operação. Ajuste o compartimento conforme o estado atual do banco.",
+            "description": "Cria o ingrediente com entrada inicial (201) ou registra uma entrada no ingrediente existente (200). O exemplo usa um destino explícito. Ajuste compartmentId conforme a disponibilidade. O script salva o ID do ingrediente em ingredientId.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"nome\": \"Farinha de trigo\",\n  \"tipo\": \"DRY\",\n  \"quantidade\": 100,\n  \"compartimentoId\": 1\n}",
+              "raw": "{\n  \"nome\": \"Farinha de trigo\",\n  \"tipo\": \"DRY\",\n  \"quantidade\": {{registrationQuantity}},\n  \"compartimentoId\": {{compartmentId}}\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -198,8 +265,15 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Ingrediente criado', () => pm.expect(pm.response.code).to.be.oneOf([201, 200]));",
-                  "try { const b=pm.response.json(); if (b.id) pm.environment.set('ingredientId', b.id); } catch(e) {}"
+                  "pm.test('Ingrediente criado ou reutilizado com entrada', () => pm.expect(pm.response.code).to.be.oneOf([201, 200]));",
+                  "const body = pm.response.json();",
+                  "pm.test('Movimentação aponta para o destino solicitado', () => {",
+                  "  pm.expect(body.compartimento.id).to.equal(Number(pm.variables.get('compartmentId')));",
+                  "  pm.expect(body.movimentacao.tipo).to.equal('INBOUND');",
+                  "});",
+                  "if ([201, 200].includes(pm.response.code) && Number.isInteger(body.id)) {",
+                  "  pm.environment.set('ingredientId', body.id);",
+                  "}"
                 ]
               }
             }
@@ -279,6 +353,48 @@
       "name": "Estoque",
       "item": [
         {
+          "name": "Consultar estoque atual por compartimento",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/estoque",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "estoque"
+              ]
+            },
+            "description": "Consulta protegida por JWT, sem parâmetros. Lista todos os compartimentos, inclusive vazios, com saldos por ingrediente, capacidade, ocupação e data da última movimentação."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Consulta retornou HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Consulta retornou os cinco compartimentos e seus saldos', () => {",
+                  "  pm.expect(body.compartimentos.map(c => c.codigo)).to.eql(['C1', 'C2', 'C3', 'C4', 'C5']);",
+                  "  for (const compartment of body.compartimentos) {",
+                  "    pm.expect(compartment.status).to.be.oneOf(['EMPTY', 'OCCUPIED', 'BLOCKED']);",
+                  "    pm.expect(compartment.ingredientes).to.be.an('array');",
+                  "    pm.expect(compartment.percentualOcupacao).to.be.a('number');",
+                  "  }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Entrada de estoque",
           "request": {
             "method": "POST",
@@ -305,7 +421,7 @@
             "description": "Registra entrada para ingrediente existente. O responsável é obtido do JWT.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"ingredienteId\": \"{{ingredientId}}\",\n  \"compartimentoId\": \"{{compartmentId}}\",\n  \"quantidade\": 25\n}",
+              "raw": "{\n  \"ingredienteId\": {{ingredientId}},\n  \"compartimentoId\": {{compartmentId}},\n  \"quantidade\": 25\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -352,7 +468,7 @@
             "description": "Registra saída. A quantidade não pode superar o saldo disponível.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"ingredienteId\": \"{{ingredientId}}\",\n  \"compartimentoId\": \"{{compartmentId}}\",\n  \"quantidade\": 5\n}",
+              "raw": "{\n  \"ingredienteId\": {{ingredientId}},\n  \"compartimentoId\": {{compartmentId}},\n  \"quantidade\": 5\n}",
               "options": {
                 "raw": {
                   "language": "json"

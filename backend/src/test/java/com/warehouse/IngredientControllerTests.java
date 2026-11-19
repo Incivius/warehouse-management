@@ -41,6 +41,118 @@ class IngredientControllerTests extends WarehouseIntegrationTestSupport {
     }
 
     @Test
+    void reusesIngredientWithoutMovementAndKeepsSameNameInOtherTypesDistinct() throws Exception {
+        createIngredient("Farinha de Trigo", "DRY");
+
+        create("""
+                {"nome":"  FARINHA   DE trigo  ","tipo":"DRY"}
+                """)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(1))
+                .andExpect(jsonPath("$.nome").value("Farinha de Trigo"))
+                .andExpect(jsonPath("$.quantidade").isEmpty())
+                .andExpect(jsonPath("$.movimentacao").isEmpty());
+
+        createIngredient("Farinha de Trigo", "REFRIGERATED");
+        assertThat(count("ingredient")).isEqualTo(2);
+        assertThat(count("compartment_stock")).isZero();
+        assertThat(count("stock_movement")).isZero();
+    }
+
+    @Test
+    void topsUpExistingIngredientWithAndWithoutAnExistingBalance() throws Exception {
+        createIngredient("Arroz", "DRY");
+
+        create("""
+                {"nome":" arroz ","tipo":"DRY","quantidade":100}
+                """)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(1))
+                .andExpect(jsonPath("$.compartimento.codigo").value("C1"))
+                .andExpect(jsonPath("$.movimentacao.responsavel").value(OPERATOR_LOGIN));
+
+        createWithStock("ARROZ", "DRY", 20, 1)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(1))
+                .andExpect(jsonPath("$.quantidade").value(20))
+                .andExpect(jsonPath("$.movimentacao.tipo").value("INBOUND"));
+
+        create("""
+                {"nome":"Arroz","tipo":"DRY"}
+                """)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(1))
+                .andExpect(jsonPath("$.movimentacao").isEmpty());
+
+        assertThat(count("ingredient")).isEqualTo(1);
+        assertThat(count("compartment_stock")).isEqualTo(1);
+        assertThat(count("stock_movement")).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT quantity FROM compartment_stock", BigDecimal.class))
+                .isEqualByComparingTo("120");
+    }
+
+    @Test
+    void automaticPlacementSkipsIncompatibleTemporarilyRestrictedAndFullCompartments() throws Exception {
+        createWithStock("Leite", "LIQUID", 100, 1).andExpect(status().isCreated());
+        createWithStock("Suco", "LIQUID", 100, 2).andExpect(status().isCreated());
+        movement("saida", 2, 2, "100").andExpect(status().isCreated());
+        createWithStock("Farinha", "DRY", 600, 3).andExpect(status().isCreated());
+        createIngredient("Arroz", "DRY");
+
+        create("""
+                {"nome":"Arroz","tipo":"DRY","quantidade":100}
+                """)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.compartimento.codigo").value("C4"));
+    }
+
+    @Test
+    void rejectsInvalidOrExcessiveTopUpsWithoutChangingExistingStock() throws Exception {
+        createWithStock("Arroz", "DRY", 500, 1).andExpect(status().isCreated());
+
+        create("""
+                {"nome":"Arroz","tipo":"DRY","quantidade":0}
+                """)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+        createWithStock("Arroz", "DRY", 101, 1)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INSUFFICIENT_CAPACITY"));
+        create("""
+                {"nome":"Arroz","tipo":"DRY","quantidade":601}
+                """)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INSUFFICIENT_CAPACITY"));
+
+        assertThat(count("ingredient")).isEqualTo(1);
+        assertThat(count("stock_movement")).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT quantity FROM compartment_stock", BigDecimal.class))
+                .isEqualByComparingTo("500");
+    }
+
+    @Test
+    void reusesLowestLegacyIdAndPreservesStockAndHistoryOfOtherRecords() throws Exception {
+        createWithStock("Arroz", "DRY", 20, 1).andExpect(status().isCreated());
+        jdbc.update("""
+                INSERT INTO ingredient (name, ingredient_type_id)
+                SELECT '  ARROZ  ', ingredient_type_id FROM ingredient WHERE id = 1
+                """);
+        movement("entrada", 2, 1, "30").andExpect(status().isCreated());
+
+        createWithStock("arroz", "DRY", 10, 1)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(1));
+
+        assertThat(count("ingredient")).isEqualTo(2);
+        assertThat(jdbc.queryForObject(
+                "SELECT quantity FROM compartment_stock WHERE ingredient_id = 2", BigDecimal.class))
+                .isEqualByComparingTo("30");
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM stock_movement WHERE ingredient_id = 2", Integer.class))
+                .isEqualTo(1);
+    }
+
+    @Test
     void createsInitialStockAndRecordsAuthenticatedUser() throws Exception {
         create("""
                 {"nome":"Feijão","tipo":"DRY","quantidade":100.125,"compartimentoId":1}
@@ -69,10 +181,34 @@ class IngredientControllerTests extends WarehouseIntegrationTestSupport {
                 """, Boolean.class)).isTrue();
     }
 
+    @Test
+    void explainsRequiredCompartmentWhenCreatingWithInitialStock() throws Exception {
+        create("""
+                {"nome":"Arroz","tipo":"DRY","quantidade":1}
+                """)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.message").value(
+                        "Para cadastrar um ingrediente novo com estoque inicial, envie compartimentoId junto com quantidade. "
+                                + "Para cadastrar sem estoque, omita quantidade."));
+        assertThat(count("ingredient")).isZero();
+    }
+
+    @Test
+    void explainsRequiredQuantityWhenCompartmentIsProvided() throws Exception {
+        create("""
+                {"nome":"Arroz","tipo":"DRY","compartimentoId":1}
+                """)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.message").value(
+                        "Envie quantidade junto com compartimentoId para registrar uma entrada, "
+                                + "ou omita compartimentoId para cadastrar sem estoque."));
+        assertThat(count("ingredient")).isZero();
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
-            "{\"nome\":\"Arroz\",\"tipo\":\"DRY\",\"quantidade\":1}",
-            "{\"nome\":\"Arroz\",\"tipo\":\"DRY\",\"compartimentoId\":1}",
             "{\"nome\":\"Arroz\",\"tipo\":\"DESCONHECIDO\"}",
             "{\"nome\":\"Arroz\",\"tipo\":\"DRY\",\"quantidade\":0,\"compartimentoId\":1}",
             "{\"nome\":\"Arroz\",\"tipo\":\"DRY\",\"quantidade\":-1,\"compartimentoId\":1}",

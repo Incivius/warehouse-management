@@ -39,39 +39,40 @@ public class IngredientService {
     }
 
     @Transactional
-    public IngredientCreateResponse create(IngredientCreateRequest request) {
-
-        validateInitialStock(request);
-
-        IngredientType ingredientType =
-                ingredientTypeService.findByName(request.tipo());
-
-        Ingredient ingredient = new Ingredient();
-        ingredient.setName(request.nome());
-        ingredient.setIngredientType(ingredientType);
-
-        ingredient = ingredientRepository.save(ingredient);
-
-        // Cadastro simples, sem estoque inicial.
-        if (request.quantidade() == null) {
-            return new IngredientCreateResponse(
-                    ingredient.getId(),
-                    ingredient.getName(),
-                    ingredientType.getName(),
-                    null,
-                    null,
-                    null
-            );
+    public Registration create(IngredientCreateRequest request) {
+        if (request.quantidade() == null && request.compartimentoId() != null) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST,
+                    "Envie quantidade junto com compartimentoId para registrar uma entrada, "
+                            + "ou omita compartimentoId para cadastrar sem estoque.");
         }
 
-        // Cadastro acompanhado de entrada inicial no estoque.
-        StockMovement movement = stockService.addInitialStock(
-                ingredient,
-                request.compartimentoId(),
-                request.quantidade()
-        );
+        IngredientType ingredientType = ingredientTypeService.findByName(request.tipo());
+        // A consulta precisa ocorrer depois que o bloqueio de identidade for adquirido.
+        ingredientRepository.lockIdentity(ingredientType.getId(), request.nome());
+        var existing = ingredientRepository.findByIdentity(ingredientType.getId(), request.nome());
+        boolean created = existing.isEmpty();
+        if (created && request.quantidade() != null && request.compartimentoId() == null) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST,
+                    "Para cadastrar um ingrediente novo com estoque inicial, envie compartimentoId junto com quantidade. "
+                            + "Para cadastrar sem estoque, omita quantidade.");
+        }
 
-        return new IngredientCreateResponse(
+        Ingredient ingredient = existing.orElseGet(() -> {
+            Ingredient newIngredient = new Ingredient();
+            newIngredient.setName(request.nome());
+            newIngredient.setIngredientType(ingredientType);
+            return ingredientRepository.save(newIngredient);
+        });
+
+        if (request.quantidade() == null) {
+            return new Registration(new IngredientCreateResponse(
+                    ingredient.getId(), ingredient.getName(), ingredientType.getName(),
+                    null, null, null
+            ), created);
+        }
+
+        StockMovement movement = stockService.addStock(ingredient, request.compartimentoId(), request.quantidade());
+        return new Registration(new IngredientCreateResponse(
                 ingredient.getId(),
                 ingredient.getName(),
                 ingredientType.getName(),
@@ -87,7 +88,7 @@ public class IngredientService {
                         movement.getUser().getLogin(),
                         movement.getCreatedAt()
                 )
-        );
+        ), created);
     }
 
     @Transactional(readOnly = true)
@@ -106,13 +107,5 @@ public class IngredientService {
         return compartmentStockRepository.sumQuantityByIngredientType();
     }
 
-    private void validateInitialStock(IngredientCreateRequest request) {
-
-        boolean hasQuantity = request.quantidade() != null;
-        boolean hasCompartment = request.compartimentoId() != null;
-
-        if (hasQuantity != hasCompartment) {
-            throw new BusinessException(ErrorCode.INVALID_REQUEST);
-        }
-    }
+    public record Registration(IngredientCreateResponse response, boolean created) {}
 }

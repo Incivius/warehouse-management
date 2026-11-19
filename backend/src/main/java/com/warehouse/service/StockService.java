@@ -2,16 +2,22 @@ package com.warehouse.service;
 
 import com.warehouse.dto.request.StockMovementRequest;
 import com.warehouse.dto.response.StockMovementResponse;
+import com.warehouse.dto.response.StockSnapshotResponse;
+import com.warehouse.dto.response.StockSnapshotResponse.CompartmentDetails;
+import com.warehouse.dto.response.StockSnapshotResponse.IngredientStock;
 import com.warehouse.entity.AppUser;
 import com.warehouse.entity.Compartment;
 import com.warehouse.entity.CompartmentStock;
 import com.warehouse.entity.Ingredient;
+import com.warehouse.entity.IngredientType;
 import com.warehouse.entity.StockMovement;
 import com.warehouse.enums.CompartmentStatus;
 import com.warehouse.enums.MovementType;
 import com.warehouse.exception.BusinessException;
 import com.warehouse.exception.ErrorCode;
 import com.warehouse.repository.AppUserRepository;
+import com.warehouse.repository.CompartmentRepository;
+import com.warehouse.repository.CompartmentRepository.StockSnapshotRow;
 import com.warehouse.repository.CompartmentStockRepository;
 import com.warehouse.repository.IngredientRepository;
 import com.warehouse.repository.StockMovementRepository;
@@ -26,11 +32,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 public class StockService {
 
     private final CompartmentService compartmentService;
+    private final CompartmentRepository compartmentRepository;
     private final CompartmentStockRepository compartmentStockRepository;
     private final StockMovementRepository stockMovementRepository;
     private final AppUserRepository appUserRepository;
@@ -38,25 +49,18 @@ public class StockService {
 
     public StockService(
             CompartmentService compartmentService,
+            CompartmentRepository compartmentRepository,
             CompartmentStockRepository compartmentStockRepository,
             StockMovementRepository stockMovementRepository,
             AppUserRepository appUserRepository,
             IngredientRepository ingredientRepository
     ) {
         this.compartmentService = compartmentService;
+        this.compartmentRepository = compartmentRepository;
         this.compartmentStockRepository = compartmentStockRepository;
         this.stockMovementRepository = stockMovementRepository;
         this.appUserRepository = appUserRepository;
         this.ingredientRepository = ingredientRepository;
-    }
-
-    @Transactional
-    public StockMovement addInitialStock(
-            Ingredient ingredient,
-            Long compartmentId,
-            BigDecimal quantity
-    ) {
-        return addStock(ingredient, compartmentId, quantity);
     }
 
     @Transactional
@@ -69,6 +73,34 @@ public class StockService {
     @Transactional
     public StockMovementResponse removeStock(StockMovementRequest request) {
         return toResponse(removeStock(request.compartimentoId(), request.ingredienteId(), request.quantidade()));
+    }
+
+    @Transactional(readOnly = true)
+    public StockSnapshotResponse findCurrentStock() {
+        var rowsByCompartment = compartmentRepository.findStockSnapshot().stream()
+                .collect(Collectors.groupingBy(StockSnapshotRow::getCompartmentId,
+                        LinkedHashMap::new, Collectors.toList()));
+        return new StockSnapshotResponse(rowsByCompartment.values().stream()
+                .map(this::toCompartmentDetails)
+                .toList());
+    }
+
+    private CompartmentDetails toCompartmentDetails(List<StockSnapshotRow> rows) {
+        StockSnapshotRow compartment = rows.getFirst();
+        List<IngredientStock> ingredients = rows.stream()
+                .filter(row -> row.getStockId() != null)
+                .map(row -> new IngredientStock(row.getStockId(), row.getIngredientId(),
+                        row.getIngredientName(), row.getIngredientType(), row.getQuantity(), row.getUnit()))
+                .toList();
+        BigDecimal occupied = ingredients.stream().map(IngredientStock::quantidade)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal capacity = compartment.getCapacity();
+        BigDecimal percentage = capacity == null || capacity.signum() == 0
+                ? BigDecimal.ZERO : occupied.movePointRight(2).divide(capacity, 2, RoundingMode.HALF_UP);
+        BigDecimal available = capacity == null ? null : capacity.subtract(occupied).max(BigDecimal.ZERO);
+        return new CompartmentDetails(compartment.getCompartmentId(), compartment.getCompartmentCode(),
+                compartment.getStatus(), compartment.getIngredientType(), capacity, compartment.getUnit(),
+                occupied, available, percentage, compartment.getLastMovement(), ingredients);
     }
 
     @Transactional(readOnly = true)
@@ -91,13 +123,13 @@ public class StockService {
         return stockMovementRepository.findAll(pageRequest).map(this::toResponse);
     }
 
-    private StockMovement addStock(Ingredient ingredient, Long compartmentId, BigDecimal quantity) {
+    @Transactional
+    public StockMovement addStock(Ingredient ingredient, Long compartmentId, BigDecimal quantity) {
         validateQuantity(quantity);
-        Compartment compartment = compartmentService.validateAndLock(
-                compartmentId,
-                ingredient.getIngredientType(),
-                quantity
-        );
+        IngredientType type = ingredient.getIngredientType();
+        Compartment compartment = compartmentId == null
+                ? compartmentService.selectAndLock(type, quantity)
+                : compartmentService.validateAndLock(compartmentId, type, quantity);
 
         AppUser user = getAuthenticatedUser();
 
