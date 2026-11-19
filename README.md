@@ -61,53 +61,71 @@ curl -X POST http://localhost:8080/auth/login \
 
 A resposta traz o JWT em `accessToken`. Envie o cabeçalho `Authorization: Bearer <accessToken>` nas demais rotas. O campo `expiresIn` indica a validade em segundos, com padrão de 3.600 segundos. Faça login novamente quando o token expirar.
 
-## Principais funcionalidades
+## Visão geral do projeto
 
-- Cadastrar e consultar ingredientes, com opção de registrar estoque inicial no cadastro.
-- Registrar entradas e saídas e consultar o estoque total por tipo.
-- Consultar compartimentos disponíveis para armazenamento ou retirada.
-- Consultar o histórico paginado de movimentações, com o usuário responsável.
+- Cadastro e consulta de ingredientes, com lançamento opcional de estoque no cadastro.
+- Entradas e saídas em cinco compartimentos, com controle de capacidade e compatibilidade por tipo.
+- Consultas de saldo por tipo, espaço para armazenamento e estoque para retirada.
+- Histórico paginado de movimentações com identificação do responsável.
 
-## Regras dos compartimentos
+## Arquitetura
 
-O armazém tem cinco compartimentos, de C1 a C5. Cada um pode armazenar vários ingredientes do mesmo tipo, respeitando a capacidade total.
+A API usa um backend Spring Boot com PostgreSQL. O modelo conceitual mostra como ingredientes, compartimentos e responsáveis se relacionam. O modelo relacional mostra onde ficam o saldo atual e o histórico.
 
-| Tipo | Capacidade por compartimento |
-| --- | ---: |
-| `DRY` | 600 kg |
-| `LIQUID` | 500 L |
-| `REFRIGERATED` | 400 kg |
+<p align="center">
+  <img src="docs/architecture/images/ConceitoLogico.png" alt="Modelo conceitual do armazém com compartimentos C1 a C5, ingredientes e movimentações" width="840">
+  <br>
+  <em>Modelo conceitual do armazém e das movimentações.</em>
+</p>
 
-- Ao esvaziar, o compartimento pode receber o mesmo tipo no mesmo dia. Outro tipo só pode entrar a partir do dia seguinte, pelo fuso da aplicação.
-- Compartimentos bloqueados impedem movimentações.
-- As quantidades devem ser positivas, com até três casas decimais. A saída é limitada pelo saldo do ingrediente no compartimento.
+<p align="center">
+  <img src="docs/architecture/images/DER_banco_de_dados.jpg" alt="Modelo relacional de ingredientes, compartimentos, saldos, movimentações e usuários" width="980">
+  <br>
+  <em>Modelo relacional. A entidade USER da figura corresponde à tabela app_user no PostgreSQL.</em>
+</p>
 
-## Endpoints
+<details>
+<summary>Diagramas dos controllers da API</summary>
 
-| Método e rota | Uso |
-| --- | --- |
-| `POST /auth/login` | Recebe `login` e `senha` e emite o JWT. |
-| `POST /ingredientes` | Recebe `nome` e `tipo`. Para incluir estoque inicial, envie também `quantidade` e `compartimentoId` juntos. |
-| `GET /ingredientes` | Lista os ingredientes cadastrados. |
-| `GET /ingredientes/{id}` | Consulta o ingrediente pelo ID. |
-| `GET /ingredientes/volume` | Soma o estoque por tipo, inclusive os tipos com saldo zero. |
-| `POST /estoque/entrada` | Recebe `ingredienteId`, `compartimentoId` e `quantidade` para registrar uma entrada. |
-| `POST /estoque/saida` | Recebe os mesmos campos para registrar uma saída. |
-| `GET /compartimentos/disponiveis?tipo=DRY&quantidade=25` | Lista os compartimentos compatíveis com capacidade livre suficiente. |
-| `GET /compartimentos/disponiveis-para-venda?tipo=DRY` | Lista os compartimentos com saldo do tipo solicitado. |
-| `GET /historico` | Lista as movimentações em `content` e os metadados de paginação em `page`. |
+<p align="center">
+  <img src="docs/architecture/images/AuthController.png" alt="Diagrama da rota de login no AuthController" width="980">
+  <br>
+  <em>A rota completa é POST /auth/login. Ela autentica o usuário e emite um JWT.</em>
+</p>
 
-No histórico, `sortBy` aceita `date` ou `compartment` e `order` aceita `asc` ou `desc`. Os padrões são `sortBy=date`, `order=desc`, `page=0` e `size=20`. O tamanho da página pode variar de 1 a 100.
+<p align="center">
+  <img src="docs/architecture/images/IngredientController.png" alt="Rotas do IngredientController para cadastro, consulta e volume por tipo" width="980">
+  <br>
+  <em>Cadastro, listagem, consulta por ID e volume total por tipo.</em>
+</p>
 
-## Testes automatizados
+<p align="center">
+  <img src="docs/architecture/images/CompartmentController.png" alt="Rotas do CompartmentController para armazenamento e retirada" width="940">
+  <br>
+  <em>A disponibilidade para armazenamento é consultada por tipo e quantidade. A consulta para retirada recebe o tipo.</em>
+</p>
 
-Com o PostgreSQL ativo e o `.env` configurado, execute em `backend`.
+<p align="center">
+  <img src="docs/architecture/images/StockController.png" alt="Rotas do StockController para entrada e saída de estoque" width="850">
+  <br>
+  <em>Entradas e saídas de estoque.</em>
+</p>
 
-```sh
-./mvnw clean test
-```
+<p align="center">
+  <img src="docs/architecture/images/StockMovementController.png" alt="Diagrama da rota GET /historico" width="860">
+  <br>
+  <em>A rota GET /historico pertence ao StockHistoryController e lista as movimentações com ordenação e paginação.</em>
+</p>
 
-Os testes de integração usam o PostgreSQL e criam esquemas isolados. O usuário configurado no Compose tem permissão para criá-los.
+</details>
+
+[Arquitetura completa](docs/architecture/architecture.md)
+
+## Documentação complementar
+
+1. [Requisitos do desafio e regras de negócio](docs/requirements.md)
+2. [Referência da API](docs/api.md)
+3. [Execução e organização dos testes](docs/testing.md)
 
 ## Postman
 
