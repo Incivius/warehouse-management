@@ -2,6 +2,18 @@
 
 API REST desenvolvida em Java e Spring Boot para gerenciar ingredientes, estoque e compartimentos de um armazém.
 
+## Documentação das rotas
+
+**Comece pela [referência da API](docs/api.md)** para consultar o payload e a resposta de cada rota, os campos obrigatórios, os valores aceitos e os códigos de erro.
+
+- [Autenticação e JWT](docs/api.md#autenticação)
+- [Cadastro e consulta de ingredientes](docs/api.md#ingredientes)
+- [Entradas e saídas de estoque](docs/api.md#estoque)
+- [Disponibilidade de compartimentos](docs/api.md#compartimentos)
+- [Paginação e ordenação do histórico](docs/api.md#paginação-e-ordenação)
+
+Para executar as requisições com exemplos preenchidos, use a [coleção Postman](#postman).
+
 ## Pré-requisitos
 
 - **Git** para clonar o repositório.
@@ -119,13 +131,13 @@ A API usa um backend Spring Boot com PostgreSQL. O modelo conceitual mostra como
 
 </details>
 
-[Arquitetura completa](docs/architecture/architecture.md)
+- [Arquitetura completa](docs/architecture/architecture.md)
+- [Quadro do Miro com os detalhes das decisões do projeto](https://miro.com/app/board/uXjVLEpIy58=/?share_link_id=658227767809)
 
 ## Documentação complementar
 
 1. [Requisitos do desafio e regras de negócio](docs/requirements.md)
-2. [Referência da API](docs/api.md)
-3. [Execução e organização dos testes](docs/testing.md)
+2. [Execução e organização dos testes](docs/testing.md)
 
 ## Postman
 
