@@ -32,44 +32,68 @@ Para executar as requisições com exemplos preenchidos, use a [coleção Postma
 
 2. Na raiz do repositório, copie o arquivo de configuração.
 
+   **Linux**
+
    ```sh
    cp .env.example .env
    ```
 
+   **Windows (PowerShell)**
+
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
    O `.env.example` já vem preenchido para execução local. Basta copiá-lo na primeira configuração. A senha do banco, a chave JWT e as credenciais iniciais da API são públicas e exclusivas para avaliação local. O Git ignora o arquivo `.env`.
 
-3. Na raiz, inicie o PostgreSQL e verifique se ele está aceitando conexões.
+3. Na raiz, inicie o PostgreSQL. Se a porta configurada em `DB_PORT` estiver ocupada, ajuste o valor no `.env` antes de subir o banco. O Compose e o Spring Boot usam essa mesma porta.
 
    ```sh
    docker compose up -d postgres
+   ```
+
+4. Verifique se o PostgreSQL já está aceitando conexões.
+
+   **Linux**
+
+   ```sh
    docker compose exec postgres sh -c 'pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
    ```
 
-   Aguarde a mensagem `accepting connections` antes de prosseguir. Se a porta `5432` estiver ocupada, ajuste `DB_PORT` no `.env` antes de subir o banco. O Compose e o Spring Boot usam esse mesmo valor.
+   **Windows (PowerShell)**
 
-4. Entre em `backend` e inicie o Spring Boot com o Maven Wrapper.
+   ```powershell
+   docker compose exec postgres pg_isready -h 127.0.0.1
+   ```
+
+   Se a mensagem `accepting connections` ainda não aparecer, aguarde alguns segundos e repita a verificação.
+
+5. Entre em `backend` e inicie o Spring Boot com o Maven Wrapper.
+
+   **Linux**
 
    ```sh
    cd backend
    ./mvnw spring-boot:run
    ```
 
+   **Windows (PowerShell)**
+
+   ```powershell
+   cd backend
+   .\mvnw.cmd spring-boot:run
+   ```
+
    Na inicialização, o Flyway executa automaticamente as migrations pendentes. Em um banco novo, elas criam o esquema e inserem os tipos de ingredientes, os cinco compartimentos e os usuários iniciais.
 
-5. Acesse a API em `http://localhost:8080`. Use a requisição abaixo para confirmar que ela está funcionando.
+6. A API fica disponível em `http://localhost:8080`.
 
 ## Primeiro acesso
 
 - **Login** `admin`
 - **Senha** `admin123`
 
-Envie uma requisição `POST /auth/login` com o JSON abaixo em um segundo terminal ou pelo Postman.
-
-```sh
-curl -X POST http://localhost:8080/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"login":"admin","senha":"admin123"}'
-```
+Para entrar, execute **Login (salva JWT automaticamente)** na [coleção Postman](#postman). Se usar outro cliente HTTP, veja o corpo e a resposta de `POST /auth/login` na [referência da API](docs/api.md).
 
 A resposta traz o JWT em `accessToken`. Envie o cabeçalho `Authorization: Bearer <accessToken>` nas demais rotas. O campo `expiresIn` indica a validade em segundos, com padrão de 3.600 segundos. Faça login novamente quando o token expirar.
 
