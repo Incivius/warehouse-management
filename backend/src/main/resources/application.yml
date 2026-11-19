@@ -1,3 +1,4 @@
+
 spring:
   config:
     import: optional:file:../.env[.properties]
@@ -21,3 +22,7 @@ spring:
 
   flyway:
     enabled: true
+
+jwt:
+  secret: ${JWT_SECRET}
+  expiration: ${JWT_EXPIRATION:3600000}
